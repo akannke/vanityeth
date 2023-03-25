@@ -1,8 +1,6 @@
-use bigint::U256;
-
 use clap::Parser;
-use libsecp256k1::{PublicKey, SecretKey};
-use rand::Rng;
+use libsecp256k1::{curve::Scalar, PublicKey, SecretKey};
+use rand::{rngs::OsRng, Rng};
 use rayon::iter::ParallelIterator;
 use rayon::prelude::IntoParallelIterator;
 use sha3::{Digest, Keccak256};
@@ -29,12 +27,28 @@ struct Opt {
     stats_interval: u64,
 }
 
-fn generate_private_key_from_seed_and_nonce(seed: &SecretKey, nonce: u64) -> SecretKey {
-    let seed_value = U256::from_big_endian(&seed.serialize());
-    let new_value = seed_value + nonce.into();
-    let mut new_secret_key_bytes = [0u8; 32];
-    new_value.to_big_endian(&mut new_secret_key_bytes);
-    SecretKey::parse(&new_secret_key_bytes).expect("Generated private key is invalid")
+trait ScalarExt {
+    fn random() -> Scalar;
+    fn increment(&mut self);
+}
+impl ScalarExt for Scalar {
+    fn random() -> Self {
+        let mut rng = OsRng::default();
+        let mut random_values = [0u32; 8];
+        for i in 0..8 {
+            random_values[i] = rng.gen();
+        }
+        Scalar(random_values)
+    }
+
+    fn increment(&mut self) {
+        let mut carry = 1u32;
+        for i in 0..8 {
+            let (res, c) = self.0[i].overflowing_add(carry);
+            self.0[i] = res;
+            carry = if c { 1 } else { 0 };
+        }
+    }
 }
 
 fn derive_public_key(secret_key: &SecretKey) -> PublicKey {
@@ -47,17 +61,6 @@ fn derive_address(public_key: &PublicKey) -> String {
     let hash = hasher.finalize();
     let address_bytes = &hash[12..];
     hex::encode(&address_bytes)
-}
-
-fn generate_random_private_key(rng: &mut impl Rng) -> SecretKey {
-    loop {
-        let mut secret_key = [0u8; 32];
-        rng.fill_bytes(&mut secret_key);
-
-        if let Ok(secret_key) = SecretKey::parse(&secret_key) {
-            return secret_key;
-        }
-    }
 }
 
 fn main() {
@@ -95,13 +98,13 @@ fn main() {
     let _: Vec<()> = (0..threads)
         .into_par_iter()
         .map_init(
-            || (rand::thread_rng()),
-            |mut rng, _| {
-                let mut nonce = 0;
-                let seed = generate_random_private_key(&mut rng);
+            || (),
+            |_, _| {
+                let mut scalar = Scalar::random();
 
                 while !found.load(Ordering::SeqCst) {
-                    let private_key = generate_private_key_from_seed_and_nonce(&seed, nonce);
+                    scalar.increment();
+                    let private_key = SecretKey::try_from(scalar).unwrap();
                     let public_key = derive_public_key(&private_key);
                     let address = derive_address(&public_key);
 
@@ -113,8 +116,6 @@ fn main() {
                         println!("Private Key: {}", hex::encode(&private_key.serialize()));
                         break;
                     }
-
-                    nonce += 1;
                 }
             },
         )
