@@ -22,8 +22,8 @@ struct Opt {
     #[clap(value_name = "PREFIX")]
     prefix: String,
     /// Number of threads to use for searching
-    #[clap(short = 't', long, default_value = "8")]
-    threads: usize,
+    #[clap(short = 't', long)]
+    threads: Option<usize>,
     /// Display search statistics every N seconds
     #[clap(short = 's', long, default_value = "1")]
     stats_interval: u64,
@@ -62,6 +62,8 @@ fn generate_random_private_key(rng: &mut impl Rng) -> SecretKey {
 
 fn main() {
     let opt = Opt::parse();
+    let default_threads = num_cpus::get();
+    let threads = opt.threads.unwrap_or(default_threads);
     let prefix = opt.prefix.trim_start_matches("0x").to_owned();
 
     let found = Arc::new(AtomicBool::new(false));
@@ -90,7 +92,7 @@ fn main() {
         })
     };
 
-    let _: Vec<()> = (0..opt.threads)
+    let _: Vec<()> = (0..threads)
         .into_par_iter()
         .map_init(
             || (rand::thread_rng()),

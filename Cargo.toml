@@ -14,3 +14,4 @@ ethers = { version = "1.0.2", features = ["rustls", "ws"] }
 hex = "0.4.3"
 bigint = "4.4.3"
 sha3 = "0.10.6"
+num_cpus = "1.15.0"
