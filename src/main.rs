@@ -97,14 +97,13 @@ fn main() {
             |mut rng, _| {
                 let mut nonce = 0;
                 let seed = generate_random_private_key(&mut rng);
-                let local_searched_addresses = AtomicU64::new(0);
 
                 while !found.load(Ordering::SeqCst) {
                     let private_key = generate_private_key_from_seed_and_nonce(&seed, nonce);
                     let public_key = derive_public_key(&private_key);
                     let address = derive_address(&public_key);
 
-                    local_searched_addresses.fetch_add(1, Ordering::SeqCst);
+                    searched_addresses.fetch_add(1, Ordering::SeqCst);
 
                     if address.starts_with(&prefix) {
                         found.store(true, Ordering::SeqCst);
@@ -114,7 +113,6 @@ fn main() {
                     }
 
                     nonce += 1;
-                    searched_addresses.fetch_add(1, Ordering::SeqCst);
                 }
             },
         )
