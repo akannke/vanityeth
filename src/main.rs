@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Args, Parser};
 use libsecp256k1::{curve::Scalar, PublicKey, SecretKey};
 use rand::{rngs::OsRng, Rng};
 use rayon::iter::ParallelIterator;
@@ -17,14 +17,24 @@ use std::time::{Duration, Instant};
 )]
 struct Opt {
     /// Desired vanity prefix (e.g., "1abc")
-    #[clap(value_name = "PREFIX")]
-    prefix: String,
+    #[command(flatten)]
+    patterns: Patterns,
     /// Number of threads to use for searching
     #[clap(short = 't', long)]
     threads: Option<usize>,
     /// Display search statistics every N seconds
     #[clap(short = 's', long, default_value = "1")]
     stats_interval: u64,
+}
+
+#[derive(Args, Debug, Clone)]
+#[group(required = true, multiple = false)]
+struct Patterns {
+    #[arg(short, long, value_name = "COUNT")]
+    zero: Option<u8>,
+
+    #[arg(short, long, value_name = "PREFIX")]
+    prefix: Option<String>,
 }
 
 trait ScalarExt {
@@ -67,7 +77,6 @@ fn main() {
     let opt = Opt::parse();
     let default_threads = num_cpus::get();
     let threads = opt.threads.unwrap_or(default_threads);
-    let prefix = opt.prefix.trim_start_matches("0x").to_owned();
 
     let found = Arc::new(AtomicBool::new(false));
 
@@ -77,7 +86,6 @@ fn main() {
     let _stats_thread = {
         let searched_addresses = Arc::clone(&searched_addresses);
         let found = Arc::clone(&found);
-        let prefix = prefix.clone();
 
         thread::spawn(move || {
             while !found.load(Ordering::SeqCst) {
@@ -85,11 +93,10 @@ fn main() {
 
                 let total_searched = searched_addresses.load(Ordering::SeqCst);
                 let rate = total_searched as f64 / start_time.elapsed().as_secs_f64();
-                let probability = total_searched as f64 / (16u64.pow(prefix.len() as u32) as f64);
 
                 println!(
-                    "Total searched addresses: {}, Rate: {} addresses/sec, Probability: {:.4}",
-                    total_searched, rate, probability
+                    "Total searched addresses: {}, Rate: {} addresses/sec",
+                    total_searched, rate
                 );
             }
         })
@@ -100,6 +107,17 @@ fn main() {
         .map_init(
             || (),
             |_, _| {
+                let patterns = opt.patterns.clone();
+                let check_address: Box<dyn Fn(&str) -> bool> =
+                    if let Some(count) = opt.patterns.zero {
+                        Box::new(move |address: &str| {
+                            address.chars().filter(|&c| c == '0').count() >= count as usize
+                        })
+                    } else {
+                        let prefix = patterns.prefix.unwrap().trim_start_matches("0x").to_owned();
+                        Box::new(move |address: &str| address.starts_with(&prefix))
+                    };
+
                 let mut scalar = Scalar::random();
 
                 while !found.load(Ordering::SeqCst) {
@@ -110,7 +128,7 @@ fn main() {
 
                     searched_addresses.fetch_add(1, Ordering::SeqCst);
 
-                    if address.starts_with(&prefix) {
+                    if check_address(&address) {
                         found.store(true, Ordering::SeqCst);
                         println!("Address: 0x{}", address);
                         println!("Private Key: {}", hex::encode(&private_key.serialize()));
